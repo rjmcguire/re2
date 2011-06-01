@@ -464,7 +464,7 @@ bool Regexp::ParseState::PushRepeatOp(RegexpOp op, const StringPiece& s,
 bool Regexp::ParseState::PushRepetition(int min, int max,
                                         const StringPiece& s,
                                         bool nongreedy) {
-  if ((max != -1 && max < min) || max > 1000) {
+  if ((max != -1 && max < min) || min > 1000 || max > 1000) {
     status_->set_code(kRegexpRepeatSize);
     status_->set_error_arg(s);
     return false;
@@ -1279,10 +1279,12 @@ static bool ParseEscape(StringPiece* s, Rune* rp,
       if (s->size() > 0 && '0' <= c && c <= '7') {
         code = code * 8 + c - '0';
         s->remove_prefix(1);  // digit
-        c = (*s)[0];
-        if (s->size() > 0 && '0' <= c && c <= '7') {
-          code = code * 8 + c - '0';
-          s->remove_prefix(1);  // digit
+        if (s->size() > 0) {
+          c = (*s)[0];
+          if ('0' <= c && c <= '7') {
+            code = code * 8 + c - '0';
+            s->remove_prefix(1);  // digit
+          }
         }
       }
       *rp = code;
@@ -2153,7 +2155,7 @@ Regexp* Regexp::Parse(const StringPiece& s, ParseFlags global_flags,
           }
         }
 
-        if (t[1] == 'p' || t[1] == 'P') {
+        if (t.size() >= 2 && (t[1] == 'p' || t[1] == 'P')) {
           Regexp* re = new Regexp(kRegexpCharClass, ps.flags() & ~FoldCase);
           re->ccb_ = new CharClassBuilder;
           switch (ParseUnicodeGroup(&t, ps.flags(), re->ccb_, status)) {

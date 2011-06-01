@@ -7,9 +7,6 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <unistd.h>
 #include <vector>
 #include "util/test.h"
 #include "re2/re2.h"
@@ -345,11 +342,13 @@ TEST(RE2, Match) {
   StringPiece group[4];
 
   // No match.
-  CHECK(!re.Match("zyzzyva", 0, RE2::UNANCHORED,
+  StringPiece s = "zyzzyva";
+  CHECK(!re.Match(s, 0, s.size(), RE2::UNANCHORED,
                   group, arraysize(group)));
 
   // Matches and extracts.
-  CHECK(re.Match("a chrisr:9000 here", 0, RE2::UNANCHORED,
+  s = "a chrisr:9000 here";
+  CHECK(re.Match(s, 0, s.size(), RE2::UNANCHORED,
                  group, arraysize(group)));
   CHECK_EQ(group[0], "chrisr:9000");
   CHECK_EQ(group[1], "chrisr:9000");
@@ -478,7 +477,7 @@ TEST(EmptyCharset, Fuzz) {
     "[^\\D[:digit:]]"
   };
   for (int i = 0; i < arraysize(empties); i++)
-    CHECK(!RE2(empties[i]).Match("abc", 0, RE2::UNANCHORED, NULL, 0));
+    CHECK(!RE2(empties[i]).Match("abc", 0, 3, RE2::UNANCHORED, NULL, 0));
 }
 
 // Test that named groups work correctly.
@@ -1184,9 +1183,9 @@ TEST(RE2, BitstateCaptureBug) {
   RE2::Options opt;
   opt.set_max_mem(20000);
   RE2 re("(_________$)", opt);
+  StringPiece s = "xxxxxxxxxxxxxxxxxxxxxxxxxx_________x";
   EXPECT_FALSE(re.Match(
-    "xxxxxxxxxxxxxxxxxxxxxxxxxx_________x",
-    0, RE2::UNANCHORED, NULL, 0));
+    s, 0, s.size(), RE2::UNANCHORED, NULL, 0));
 }
 
 // C++ version of bug 609710.
@@ -1271,6 +1270,19 @@ TEST(RE2, Bug3061120) {
   EXPECT_FALSE(RE2::PartialMatch("x", re));  // always worked
   EXPECT_FALSE(RE2::PartialMatch("k", re));  // broke because of kelvin
   EXPECT_FALSE(RE2::PartialMatch("s", re));  // broke because of latin long s
+}
+
+TEST(RE2, CapturingGroupNames) {
+  // Opening parentheses annotated with group IDs:
+  //      12    3        45   6         7
+  RE2 re("((abc)(?P<G2>)|((e+)(?P<G2>.*)(?P<G1>u+)))");
+  EXPECT_TRUE(re.ok());
+  const map<int, string>& have = re.CapturingGroupNames();
+  map<int, string> want;
+  want[3] = "G2";
+  want[6] = "G2";
+  want[7] = "G1";
+  EXPECT_EQ(want, have);
 }
 
 }  // namespace re2

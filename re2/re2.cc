@@ -154,6 +154,7 @@ void RE2::Init(const StringPiece& pattern, const Options& options) {
   prog_ = NULL;
   rprog_ = NULL;
   named_groups_ = NULL;
+  group_names_ = NULL;
   num_captures_ = -1;
 
   RegexpStatus status;
@@ -217,7 +218,8 @@ re2::Prog* RE2::ReverseProg() const {
   return rprog_;
 }
 
-static const map<string, int> empty_map;
+static const map<string, int> empty_named_groups;
+static const map<int, string> empty_group_names;
 
 RE2::~RE2() {
   if (suffix_regexp_)
@@ -229,8 +231,10 @@ RE2::~RE2() {
   delete rprog_;
   if (error_ != &empty_string)
     delete error_;
-  if (named_groups_ != NULL && named_groups_ != &empty_map)
+  if (named_groups_ != NULL && named_groups_ != &empty_named_groups)
     delete named_groups_;
+  if (group_names_ != NULL &&  group_names_ != &empty_group_names)
+    delete group_names_;
 }
 
 int RE2::ProgramSize() const {
@@ -243,13 +247,26 @@ int RE2::ProgramSize() const {
 const map<string, int>&  RE2::NamedCapturingGroups() const {
   MutexLock l(mutex_);
   if (!ok())
-    return empty_map;
+    return empty_named_groups;
   if (named_groups_ == NULL) {
     named_groups_ = suffix_regexp_->NamedCaptures();
     if (named_groups_ == NULL)
-      named_groups_ = &empty_map;
+      named_groups_ = &empty_named_groups;
   }
   return *named_groups_;
+}
+
+// Returns group_names_, computing it if needed.
+const map<int, string>&  RE2::CapturingGroupNames() const {
+  MutexLock l(mutex_);
+  if (!ok())
+    return empty_group_names;
+  if (group_names_ == NULL) {
+    group_names_ = suffix_regexp_->CaptureNames();
+    if (group_names_ == NULL)
+      group_names_ = &empty_group_names;
+  }
+  return *group_names_;
 }
 
 /***** Convenience interfaces *****/
@@ -312,7 +329,7 @@ bool RE2::Replace(string *str,
   int nvec = 1 + MaxSubmatch(rewrite);
   if (nvec > arraysize(vec))
     return false;
-  if (!re.Match(*str, 0, UNANCHORED, vec, nvec))
+  if (!re.Match(*str, 0, str->size(), UNANCHORED, vec, nvec))
     return false;
 
   string s;
@@ -339,7 +356,7 @@ int RE2::GlobalReplace(string *str,
   string out;
   int count = 0;
   while (p <= ep) {
-    if (!re.Match(*str, p - str->data(), UNANCHORED, vec, nvec))
+    if (!re.Match(*str, p - str->data(), str->size(), UNANCHORED, vec, nvec))
       break;
     if (p < vec[0].begin())
       out.append(p, vec[0].begin() - p);
@@ -374,7 +391,7 @@ bool RE2::Extract(const StringPiece &text,
   if (nvec > arraysize(vec))
     return false;
 
-  if (!re.Match(text, 0, UNANCHORED, vec, nvec))
+  if (!re.Match(text, 0, text.size(), UNANCHORED, vec, nvec))
     return false;
 
   out->clear();
@@ -483,6 +500,7 @@ static int ascii_strcasecmp(const char* a, const char* b, int len) {
 
 bool RE2::Match(const StringPiece& text,
                 int startpos,
+                int endpos,
                 Anchor re_anchor,
                 StringPiece* submatch,
                 int nsubmatch) const {
@@ -491,9 +509,15 @@ bool RE2::Match(const StringPiece& text,
       LOG(ERROR) << "Invalid RE2: " << *error_;
     return false;
   }
+  
+  if (startpos < 0 || startpos > endpos || endpos > text.size()) {
+    LOG(ERROR) << "RE2: invalid startpos, endpos pair.";
+    return false;
+  }
 
   StringPiece subtext = text;
   subtext.remove_prefix(startpos);
+  subtext.remove_suffix(text.size() - endpos);
 
   // Use DFAs to find exact location of match, filter out non-matches.
 
@@ -508,7 +532,11 @@ bool RE2::Match(const StringPiece& text,
   if (ncap > nsubmatch)
     ncap = nsubmatch;
 
-  // If the regexp is explicitly anchored, update re_anchor
+  // If the regexp is anchored explicitly, must not be in middle of text.
+  if (prog_->anchor_start() && startpos != 0)
+    return false;
+
+  // If the regexp is anchored explicitly, update re_anchor
   // so that we can potentially fall into a faster case below.
   if (prog_->anchor_start() && prog_->anchor_end())
     re_anchor = ANCHOR_BOTH;
@@ -518,6 +546,8 @@ bool RE2::Match(const StringPiece& text,
   // Check for the required prefix, if any.
   int prefixlen = 0;
   if (!prefix_.empty()) {
+    if (startpos != 0)
+      return false;
     prefixlen = prefix_.size();
     if (prefixlen > subtext.size())
       return false;
@@ -753,7 +783,7 @@ bool RE2::DoMatch(const StringPiece& text,
     heapvec = vec;
   }
 
-  if (!Match(text, 0, anchor, vec, nvec)) {
+  if (!Match(text, 0, text.size(), anchor, vec, nvec)) {
     delete[] heapvec;
     return false;
   }

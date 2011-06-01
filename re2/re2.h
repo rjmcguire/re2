@@ -349,14 +349,17 @@ class RE2 {
                       const RE2& pattern,
                       const StringPiece& rewrite);
 
-  // Like Replace(), except replaces all occurrences of the pattern in
-  // the string with the rewrite.  Replacements are not subject to
-  // re-matching.  E.g.,
+  // Like Replace(), except replaces successive non-overlapping occurrences
+  // of the pattern in the string with the rewrite. E.g.
   //
   //   string s = "yabba dabba doo";
   //   CHECK(RE2::GlobalReplace(&s, "b+", "d"));
   //
   // will leave "s" containing "yada dada doo"
+  // Replacements are not subject to re-matching.
+  //
+  // Because GlobalReplace only replaces non-overlapping matches,
+  // replacing "ana" within "banana" makes only one replacement, not two.
   //
   // Returns the number of replacements made.
   static int GlobalReplace(string *str,
@@ -412,12 +415,21 @@ class RE2 {
   // does not count: if the regexp is "(a)(b)", returns 2.
   int NumberOfCapturingGroups() const;
 
+
   // Return a map from names to capturing indices.
+  // The map records the index of the leftmost group
+  // with the given name.
   // Only valid until the re is deleted.
   const map<string, int>& NamedCapturingGroups() const;
 
+  // Return a map from capturing indices to names.
+  // The map has no entries for unnamed groups.
+  // Only valid until the re is deleted.
+  const map<int, string>& CapturingGroupNames() const;
+
   // General matching routine.
-  // Match against text starting at offset startpos.
+  // Match against text starting at offset startpos
+  // and stopping the search at offset endpos.
   // Returns true if match found, false if not.
   // On a successful match, fills in match[] (up to nmatch entries)
   // with information about submatches.
@@ -437,6 +449,7 @@ class RE2 {
   // either way, match[i] == NULL.
   bool Match(const StringPiece& text,
              int startpos,
+             int endpos,
              Anchor anchor,
              StringPiece *match,
              int nmatch) const;
@@ -684,6 +697,9 @@ class RE2 {
 
   // Map from capture names to indices
   mutable const map<string, int>* named_groups_;
+
+  // Map from capture indices to names
+  mutable const map<int, string>* group_names_;
 
   //DISALLOW_EVIL_CONSTRUCTORS(RE2);
   RE2(const RE2&);
